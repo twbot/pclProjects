@@ -66,205 +66,9 @@
 #include <string>
 
 void printUsage (const char* progName){
-  std::cout << "\nUsage: " << progName << " <input cloud> <downsample percentage> <surface method> <normal estimation method> <output dir>"  << std::endl;
+  std::cout << "\nUsage: " << progName << " <input cloud> <surface method> <leaf size> <output dir>"  << std::endl;
   std::cout << "surface method: \n '1' for poisson \n '2' for gp3" << std::endl;
-  std::cout << "normal estimation method: \n '1' for normal estimation \n '2' for mls normal estimation" << std::endl;
-}
-
-void create_mesh(pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud,int& surface_mode,int& normal_method,pcl::PolygonMesh& triangles)
-{
-  /*****Translated point cloud to origin*****/
-  Eigen::Vector4f centroid;
-  pcl::compute3DCentroid(*cloud, centroid);
-
-  Eigen::Affine3f transform = Eigen::Affine3f::Identity();
-  transform.translation() << -centroid[0], -centroid[1], -centroid[2];
-
-  pcl::PointCloud<pcl::PointXYZ>::Ptr cloudTranslated(new pcl::PointCloud<pcl::PointXYZ>());
-  pcl::transformPointCloud(*cloud, *cloudTranslated, transform);
-  std::cout << "Cloud Translated width: " << cloudTranslated-> width << std::endl;
-  /* ****kdtree search and msl object**** */
-  pcl::search::KdTree<pcl::PointXYZ>::Ptr kdtree_for_points (new pcl::search::KdTree<pcl::PointXYZ>);
-  kdtree_for_points->setInputCloud(cloudTranslated);
-  // kdtree_for_points->getInputCloud()->width;
-  pcl::PointCloud<pcl::PointNormal>::Ptr cloud_with_normals (new pcl::PointCloud<pcl::PointNormal> ());
-
-  bool mls_mode = false;
-  bool normal_mode = false;
-
-  if(normal_method == 1)
-  {
-    normal_mode = true;
-  }
-  else if(normal_method == 2)
-  {
-    mls_mode = true;
-  }
-  else
-  {
-    std::cout << "Select:\n '1' for normal estimation \n '2' for mls normal estimation " << std::endl;
-    std::exit(-1);
-  }
-
-  bool gp3_mode = false;
-  bool poisson_mode = false;
-
-  if(surface_mode == 1)
-  {
-    poisson_mode = true;
-  }
-  else if(surface_mode == 2)
-  {
-    gp3_mode = true;
-  }
-  else
-  {
-    std::cout << "Select: \n'1' for surface poisson method \n '2' for surface gp3 method " << std::endl;
-    std::exit(-1);
-  }
-
-  if(mls_mode)
-  {
-    std::cout << "Using mls method estimation...";
-
-    pcl::PointCloud<pcl::PointNormal>::Ptr mls_points (new pcl::PointCloud<pcl::PointNormal>());
-    pcl::MovingLeastSquares<pcl::PointXYZ, pcl::PointNormal> mls;       
-
-    //Set parameters
-    mls.setComputeNormals(true);  
-    mls.setInputCloud(cloudTranslated);
-    // mls.setDilationIterations(10);
-    //mls.setDilationVoxelSize(0.5);
-    //mls.setSqrGaussParam(2.0);
-    //mls.setUpsamplingRadius(5);
-    //mls.setPolynomialOrder (2); 
-    //mls.setPointDensity(30);
-    mls.setSearchMethod(kdtree_for_points);
-    mls.setSearchRadius(0.03);
-    mls.process(*mls_points);  
-
-    pcl::PointCloud<pcl::PointXYZ>::Ptr temp(new pcl::PointCloud<pcl::PointXYZ>());
-
-    for(int i = 0; i < mls_points->points.size(); i++)
-    {
-      pcl::PointXYZ pt;
-      pt.x = cloud->points[i].x; 
-      pt.y = cloud->points[i].y; 
-      pt.z = cloud->points[i].z; 
-
-      temp->points.push_back(pt);            
-    }
-
-
-    pcl::concatenateFields (*temp, *mls_points, *cloud_with_normals);
-    std::cout << "[OK]" << std::endl;
-
-  }
-  else if(normal_mode)
-  {
-    std::cout << "Using normal method estimation...";
-
-    pcl::NormalEstimationOMP<pcl::PointXYZ, pcl::Normal> n;
-    pcl::PointCloud<pcl::Normal>::Ptr normals (new pcl::PointCloud<pcl::Normal>);
-
-    std::cout << cloudTranslated->width;
-    n.setInputCloud(cloudTranslated);
-    n.setSearchMethod(kdtree_for_points);
-    n.setKSearch(20); //It was 20
-    n.compute(*normals);//Normals are estimated using standard method.
-
-    // pcl::PointCloud<pcl::PointNormal>::Ptr cloud_with_normals (new pcl::PointCloud<pcl::PointNormal> ());
-    pcl::concatenateFields(*cloud, *normals, *cloud_with_normals);
-
-    std::cout << "[OK]" << std::endl;
-  }
-  else
-  {
-    std::cout << "Select: '1' for normal method estimation \n '2' for mls normal estimation " << std::endl;
-    std::exit(-1);
-  }
-
-  // Create search tree*
-  pcl::search::KdTree<pcl::PointNormal>::Ptr kdtree_for_normals (new pcl::search::KdTree<pcl::PointNormal>);
-  kdtree_for_normals->setInputCloud(cloud_with_normals);
-
-  std::cout << "Applying surface meshing...";
-
-  if(gp3_mode)
-  {
-    std::cout << "Using surface method: gp3 ..." << std::endl;
-
-    int searchK = 100;
-    int search_radius = 10;
-    int setMU = 5;
-    int maxiNearestNeighbors = 100;
-    bool normalConsistency = false;
-
-    pcl::GreedyProjectionTriangulation<pcl::PointNormal> gp3;
-
-    gp3.setSearchRadius(search_radius);//It was 0.025
-    gp3.setMu(setMU); //It was 2.5
-    gp3.setMaximumNearestNeighbors(maxiNearestNeighbors);    //It was 100
-    //gp3.setMaximumSurfaceAngle(M_PI/4); // 45 degrees    //it was 4
-    //gp3.setMinimumAngle(M_PI/18); // 10 degrees //It was 18
-    //gp3.setMaximumAngle(M_PI/1.5); // 120 degrees        //it was 1.5
-    gp3.setNormalConsistency(normalConsistency); //It was false
-    gp3.setInputCloud(cloud_with_normals);
-    gp3.setSearchMethod(kdtree_for_normals);
-    gp3.reconstruct(triangles);
-
-    vtkSmartPointer<vtkPolyData> polydata = vtkSmartPointer<vtkPolyData>::New();
-    pcl::PolygonMesh mesh_pcl;
-    //pcl::VTKUtils::convertToVTK(triangles,polydata);
-    pcl::VTKUtils::convertToPCL(polydata,mesh_pcl);
-
-    pcl::io::savePolygonFilePLY("mesh.ply", mesh_pcl);
-
-    std::cout << "[OK]" << std::endl;
-  }
-  else if(poisson_mode)
-  {
-    std::cout << "Using surface method: poisson ..." << std::endl;
-
-    int nThreads=8;
-    int setKsearch=10;
-    int depth=7;
-    float pointWeight=2.0;
-    float samplePNode=1.5;
-    float scale=1.1;
-    int isoDivide=8;
-    bool confidence=true;
-    bool outputPolygons=true;
-    bool manifold=true;
-    int solverDivide=8;
-
-    pcl::Poisson<pcl::PointNormal> poisson;
-
-    poisson.setDepth(depth);//9
-    poisson.setInputCloud(cloud_with_normals);
-    poisson.setPointWeight(pointWeight);//4
-    poisson.setDegree(2);
-    poisson.setSamplesPerNode(samplePNode);//1.5
-    poisson.setScale(scale);//1.1
-    poisson.setIsoDivide(isoDivide);//8
-    poisson.setConfidence(confidence);
-    poisson.setOutputPolygons(outputPolygons);
-    poisson.setManifold(manifold);
-    poisson.setSolverDivide(solverDivide);//8
-    poisson.reconstruct(triangles);
-
-    //pcl::PolygonMesh mesh2;
-    //poisson.reconstruct(mesh2);
-    //pcl::surface::SimplificationRemoveUnusedVertices rem;
-    //rem.simplify(mesh2,triangles);
-
-    std::cout << "[OK]" << std::endl;
-  }
-  else
-  {
-    std::cout << "Select: \n'1' for surface poisson method \n '2' for surface gp3 method " << std::endl;
-    std::exit(-1);
-  }
+  //std::cout << "normal estimation method: \n '1' for normal estimation \n '2' for mls normal estimation" << std::endl;
 }
 
 void vizualizeMesh(pcl::PointCloud<pcl::PointXYZRGB>::Ptr & cloud,pcl::PolygonMesh &mesh)
@@ -272,6 +76,7 @@ void vizualizeMesh(pcl::PointCloud<pcl::PointXYZRGB>::Ptr & cloud,pcl::PolygonMe
 
   boost::shared_ptr<pcl::visualization::PCLVisualizer> viewer (new pcl::visualization::PCLVisualizer ("MAP3D MESH"));
 
+  viewer->setFullScreen(true);
   int PORT1 = 0;
   viewer->createViewPort(0.0, 0.0, 0.5, 1.0, PORT1);
   viewer->setBackgroundColor (255, 255, 255, PORT1);
@@ -381,13 +186,14 @@ void cloudPointFilter(pcl::PointCloud<pcl::PointXYZ>::Ptr & cloud,pcl::PointClou
 */
 
 void downSample(pcl::PointCloud<pcl::PointXYZRGB>::Ptr & cloud,
-  pcl::PointCloud<pcl::PointXYZRGB>::Ptr & cloudFiltered)
+  pcl::PointCloud<pcl::PointXYZRGB>::Ptr & cloudFiltered,
+  float leafSize)
 {
 
   pcl::VoxelGrid<pcl::PointXYZRGB> sor;
   // pcl::toPCLPointCloud2(cloud, point_cloud2);
   sor.setInputCloud (cloud);
-  sor.setLeafSize (0.85f, 0.85f, 0.85f);
+  sor.setLeafSize (leafSize, leafSize, leafSize); // was 0.85f
   sor.filter(*cloudFiltered);
 
 
@@ -423,9 +229,202 @@ void decreaseRadius(pcl::PointCloud<pcl::PointXYZRGB>::Ptr & cloud,
   }
 }
 
-void computeNormals()
+void calculateNormals(pcl::PointCloud<pcl::PointXYZ>::Ptr& inputCloud,
+  pcl::PointCloud<pcl::PointNormal>::Ptr& outputCloud)
+{
+  std::cout << "Input dimension" << inputCloud->size()<<std::endl;
+  pcl::search::KdTree<pcl::PointXYZ>::Ptr kdTree (new pcl::search::KdTree<pcl::PointXYZ>);
+  kdTree->setInputCloud(inputCloud);
+
+  //Normal Estimation
+  std::cout << "Using normal method estimation...";
+  pcl::NormalEstimationOMP<pcl::PointXYZ, pcl::Normal> estimator;
+  estimator.setNumberOfThreads(3);
+  pcl::PointCloud<pcl::Normal>::Ptr normals (new pcl::PointCloud<pcl::Normal>);
+  estimator.setInputCloud(inputCloud);
+  estimator.setSearchMethod(kdTree);
+  estimator.setKSearch(5); //It was 20
+  estimator.compute(*normals);//Normals are estimated using standard method.
+
+  // pcl::PointCloud<pcl::PointNormal>::Ptr cloud_with_normals (new pcl::PointCloud<pcl::PointNormal> ());
+  pcl::concatenateFields(*inputCloud, *normals, *outputCloud);
+
+  std::cout << "Normal Estimation...[OK]" << std::endl;
+}
+
+void applySurfaceApproximation(pcl::PointCloud<pcl::PointXYZ>::Ptr & cloud,
+  pcl::PointCloud<pcl::PointXYZ>::Ptr & outCloud)
 {
 
+  /* ****kdtree search and msl object**** */
+  pcl::search::KdTree<pcl::PointXYZ>::Ptr kdTree (new pcl::search::KdTree<pcl::PointXYZ>);
+  kdTree->setInputCloud(cloud);
+
+  std::cout << "Using MLS for Surface Approximation...";
+
+  pcl::PointCloud<pcl::PointXYZ>::Ptr mls_points (new pcl::PointCloud<pcl::PointXYZ>());
+  pcl::MovingLeastSquares<pcl::PointXYZ, pcl::PointXYZ> mls;       
+  mls.setNumberOfThreads(3);
+
+  // mls.setComputeNormals(true);
+  mls.setInputCloud(cloud); //ORIGINAL
+  // Set parameters
+  mls.setDilationIterations(10);
+  mls.setDilationVoxelSize(0.5);
+  mls.setSqrGaussParam(2.0);
+  mls.setUpsamplingRadius(5);
+  mls.setPolynomialOrder (2); 
+  mls.setPointDensity(30);
+
+  mls.setSearchMethod(kdTree);
+  mls.setSearchRadius(0.4);
+  mls.process(*mls_points);
+
+  pcl::PointCloud<pcl::PointXYZ>::Ptr temp(new pcl::PointCloud<pcl::PointXYZ>());
+  // pcl::PointCloud<pcl::PointXYZ>::Ptr outputCloud(new pcl::PointCloud<pcl::PointXYZ>());
+
+  for(int i = 0; i < mls_points->points.size(); i++)
+  {
+    pcl::PointXYZ pt;
+    pt.x = cloud->points[i].x; 
+    pt.y = cloud->points[i].y; 
+    pt.z = cloud->points[i].z;
+    temp->points.push_back(pt);            
+  }
+
+  pcl::concatenateFields (*temp, *mls_points, *outCloud);
+  // pcl::copyPointCloud(*outputCloud,*cloud);
+  std::cout << "MLS Surface Approximation...[OK]" << std::endl;
+}
+
+// void ballPivotingSurfaceReconstruction(){
+
+// }
+
+void createMesh(pcl::PointCloud<pcl::PointNormal>::Ptr& inputCloud,int& surface_mode,pcl::PolygonMesh& triangles)
+{
+
+  bool gp3_mode = false;
+  bool poisson_mode = false;
+  bool rolling_ball_mode = false;
+
+  if(surface_mode == 1)
+  {
+    poisson_mode = true;
+  }
+  else if(surface_mode == 2)
+  {
+    gp3_mode = true;
+  }
+  else if(surface_mode == 3)
+  {
+    rolling_ball_mode = true;
+  }
+  else
+  {
+    std::cout << "Select: \n'1' for surface poisson method \n '2' for surface gp3 method " << std::endl;
+    std::exit(-1);
+  }
+
+  // Create search tree*
+  pcl::search::KdTree<pcl::PointNormal>::Ptr kdtree_normals (new pcl::search::KdTree<pcl::PointNormal>);
+  std::cout << inputCloud-> width << std::endl;
+  kdtree_normals->setInputCloud(inputCloud);
+
+  std::cout << "Applying surface meshing...";
+
+  if(gp3_mode)
+  {
+    std::cout << "Using surface method: gp3 ..." << std::endl;
+
+    int searchK = 100;
+    int search_radius = 10;
+    int setMU = 5;
+    int maxiNearestNeighbors = 584682;
+    bool normalConsistency = false;
+
+    pcl::GreedyProjectionTriangulation<pcl::PointNormal> gp3;
+
+    gp3.setSearchRadius(search_radius);//It was 0.025
+    gp3.setMu(setMU); //It was 2.5
+    gp3.setMaximumNearestNeighbors(maxiNearestNeighbors);    //It was 100
+    gp3.setMaximumSurfaceAngle(M_PI/4); // 45 degrees    //it was 4
+    gp3.setMinimumAngle(M_PI/18); // 10 degrees //It was 18
+    gp3.setMaximumAngle(M_PI/1.5); // 120 degrees        //it was 1.5
+    gp3.setNormalConsistency(normalConsistency); //It was false
+    gp3.setInputCloud(inputCloud);
+    gp3.setSearchMethod(kdtree_normals);
+    gp3.reconstruct(triangles);
+
+    vtkSmartPointer<vtkPolyData> polydata = vtkSmartPointer<vtkPolyData>::New();
+    pcl::PolygonMesh mesh_pcl;
+    //pcl::VTKUtils::convertToVTK(triangles,polydata);
+    pcl::VTKUtils::convertToPCL(polydata,mesh_pcl);
+
+    pcl::io::savePolygonFilePLY("mesh.ply", mesh_pcl);
+
+    std::cout << "OK" << std::endl;
+  }
+  else if(poisson_mode)
+  {
+    std::cout << "Using surface method: poisson ..." << std::endl;
+
+    int nThreads=8;
+    int setKsearch=10;
+    int depth=7; //typical 9
+    float pointWeight=4.0;
+    float samplePNode=1.5; // typical 1.5
+    float scale=0.4; //typical 1.1
+    int isoDivide=8;
+    bool confidence=true;
+    bool outputPolygons=true;
+    bool manifold=true;
+    int solverDivide=8;
+
+    pcl::Poisson<pcl::PointNormal> poisson;
+
+    poisson.setDepth(depth);//9
+    poisson.setInputCloud(inputCloud);
+    poisson.setPointWeight(pointWeight);//4
+    poisson.setDegree(2);
+    poisson.setSamplesPerNode(samplePNode);//1.5
+    poisson.setScale(scale);//1.1
+    poisson.setIsoDivide(isoDivide);//8
+    poisson.setConfidence(confidence);
+    poisson.setOutputPolygons(outputPolygons);
+    poisson.setManifold(manifold);
+    poisson.setSolverDivide(solverDivide);//8
+    poisson.reconstruct(triangles);
+
+    //pcl::PolygonMesh mesh2;
+    //poisson.reconstruct(mesh2);
+    //pcl::surface::SimplificationRemoveUnusedVertices rem;
+    //rem.simplify(mesh2,triangles);
+
+    std::cout << "OK" << std::endl;
+  }
+  else if(rolling_ball_mode)
+  {
+
+  }
+  else
+  {
+    std::cout << "Select: \n'1' for surface poisson method \n '2' for surface gp3 method " << std::endl;
+    std::exit(-1);
+  }
+}
+
+void translateCloud(pcl::PointCloud<pcl::PointXYZ>::Ptr& inputCloud,
+  pcl::PointCloud<pcl::PointXYZ>::Ptr& outputCloud) {
+  /*****Translated point cloud to origin*****/
+  Eigen::Vector4f centroid;
+  pcl::compute3DCentroid(*inputCloud, centroid);
+
+  Eigen::Affine3f transform = Eigen::Affine3f::Identity();
+  transform.translation() << -centroid[0], -centroid[1], -centroid[2];
+
+  pcl::transformPointCloud(*inputCloud, *outputCloud, transform);
+  std::cout << "Cloud Translated width: " << outputCloud-> width << std::endl;
 }
 
 int main(int argc, char **argv){
@@ -440,7 +439,7 @@ int main(int argc, char **argv){
 	bool file_is_txt = false;
 	bool file_is_xyz = false;  
 
-	if(argc<6 or argc>6){
+	if(argc<5 or argc>5){
 	  printUsage(argv[0]);
 	  return -1;
 	}
@@ -503,15 +502,15 @@ int main(int argc, char **argv){
 	else if(file_is_ply)
   {
     pcl::io::loadPLYFile(argv[filenames[0]],*cloud);
-    if(cloud->points.size()<=0 or cloud->points[0].x<=0 and cloud->points[0].y<=0 and cloud->points[0].z<=0){
+    if(cloud->points.size()<=0 || cloud->points[0].x<=0 && cloud->points[0].y<=0 && cloud->points[0].z<=0){
         pcl::console::print_warn("\nloadPLYFile could not read the cloud, attempting to loadPolygonFile...\n");
         pcl::io::loadPolygonFile(argv[filenames[0]], cl);
         pcl::fromPCLPointCloud2(cl.cloud, *cloud);
-        if(cloud->points.size()<=0 or cloud->points[0].x<=0 and cloud->points[0].y<=0 and cloud->points[0].z<=0){
+        if(cloud->points.size()<=0 || cloud->points[0].x<=0 && cloud->points[0].y<=0 && cloud->points[0].z<=0){
             pcl::console::print_warn("\nloadPolygonFile could not read the cloud, attempting to PLYReader...\n");
             pcl::PLYReader plyRead;
             plyRead.read(argv[filenames[0]],*cloud);
-            if(cloud->points.size()<=0 or cloud->points[0].x<=0 and cloud->points[0].y<=0 and cloud->points[0].z<=0){
+            if(cloud->points.size()<=0 || cloud->points[0].x<=0 && cloud->points[0].y<=0 && cloud->points[0].z<=0){
                 pcl::console::print_error("\nError. ply file is not compatible.\n");
                 return -1;
             }
@@ -602,12 +601,12 @@ int main(int argc, char **argv){
   	pcl::console::print_info("Point cloud is organized\n");
   }
 
-  std::string select_mode = argv[3];
-  std::string select_normal_method = argv[4];//10
-  std::string output_dir = argv[5];//10
+  std::string select_mode = argv[2];
+  std::string select_leaf_size = argv[3];
+  std::string output_dir = argv[4];//10
 
-  int surface_mode = std::atoi(select_mode.c_str()); 
-  int normal_method = std::atoi(select_normal_method.c_str()); 
+  float leaf_size = std::atof(select_leaf_size.c_str());
+  int surface_mode = std::atoi(select_mode.c_str());
  
   boost::filesystem::path dirPath(output_dir);     
 
@@ -617,23 +616,26 @@ int main(int argc, char **argv){
       std::exit(-1);
   }
 
-  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_xyz (new pcl::PointCloud<pcl::PointXYZ>());
+  pcl::PointCloud<pcl::PointNormal>::Ptr cloud_normals (new pcl::PointCloud<pcl::PointNormal>);
   pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_out (new pcl::PointCloud<pcl::PointXYZRGB>());
+  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_xyz (new pcl::PointCloud<pcl::PointXYZ>());
+  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_translated (new pcl::PointCloud<pcl::PointXYZ>());
 
-  downSample(cloud, cloud_out);
-  pcl::copyPointCloud(*cloud_out,*cloud_xyz);
-
-  //COMMENTED OUT CODE
-  //pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_xyz_filtered (new pcl::PointCloud<pcl::PointXYZ>());
-  //COMMENTED OUT CODE
-  //cloudPointFilter(cloud_xyz,cloud_xyz_filtered);
+  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_temp(new pcl::PointCloud<pcl::PointXYZ>());
 
   pcl::PolygonMesh cloud_mesh;
 
+  downSample(cloud, cloud_out, leaf_size);
+  pcl::copyPointCloud(*cloud_out,*cloud_xyz);
+
+  translateCloud(cloud_xyz, cloud_translated);
+  applySurfaceApproximation(cloud_translated, cloud_temp);
+  calculateNormals(cloud_translated, cloud_normals);
+  
   std::cout << cloud-> width << std::endl;
   std::cout << cloud_out-> width << std::endl;
 
-  create_mesh(cloud_xyz,surface_mode,normal_method,cloud_mesh);
+  createMesh(cloud_normals,surface_mode,cloud_mesh);
 
   output_dir += "/cloud_mesh.ply";
 
